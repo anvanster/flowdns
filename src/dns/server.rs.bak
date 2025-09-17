@@ -1,0 +1,91 @@
+use crate::config::Settings;
+use crate::dns::zone_manager::ZoneManager;
+use sqlx::PgPool;
+use hickory_server::ServerFuture;
+use hickory_server::authority::Catalog;
+use hickory_server::store::in_memory::InMemoryAuthority;
+use std::sync::Arc;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::time::Duration;
+use tokio::net::{UdpSocket, TcpListener};
+use anyhow::{Result, Context};
+use tracing::{info, error};
+
+pub struct DnsServer {
+    zone_manager: Arc<ZoneManager>,
+    settings: Arc<Settings>,
+}
+
+impl DnsServer {
+    pub async fn new(db: PgPool, settings: Arc<Settings>) -> Result<Self> {
+        let zone_manager = Arc::new(ZoneManager::new(db, settings.clone()).await?);
+
+        Ok(Self {
+            zone_manager,
+            settings,
+        })
+    }
+
+    pub async fn start(self) -> Result<()> {
+        let dns_addr = SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            self.settings.dns.port,
+        );
+
+        info!("Starting DNS server on {}", dns_addr);
+
+        // Start UDP server
+        let udp_socket = UdpSocket::bind(dns_addr)
+            .await
+            .context("Failed to bind UDP socket")?;
+
+        // Start TCP server
+        let tcp_listener = TcpListener::bind(dns_addr)
+            .await
+            .context("Failed to bind TCP listener")?;
+
+        // Create a Catalog from the zones
+        let zones = self.zone_manager.get_catalog();
+        let mut catalog = Catalog::new();
+
+        // Add zones to the catalog
+        let zones_guard = zones.read().await;
+        for (name, authority) in zones_guard.iter() {
+            catalog.upsert(name.clone(), Box::new(authority.clone()));
+        }
+        drop(zones_guard);
+
+        // Create server future with the catalog
+        let mut server = ServerFuture::new(catalog);
+
+        // Register UDP handler
+        server.register_socket(udp_socket);
+
+        // Register TCP listener with timeout
+        let tcp_timeout = Duration::from_secs(5);
+        server.register_listener(tcp_listener, tcp_timeout);
+
+        info!("DNS server listening on {} (UDP/TCP)", dns_addr);
+
+        // Run the server
+        match server.block_until_done().await {
+            Ok(_) => {
+                info!("DNS server shutdown gracefully");
+                Ok(())
+            },
+            Err(e) => {
+                error!("DNS server error: {}", e);
+                Err(anyhow::anyhow!("DNS server failed: {}", e))
+            }
+        }
+    }
+
+    pub fn get_zone_manager(&self) -> Arc<ZoneManager> {
+        self.zone_manager.clone()
+    }
+}
+
+pub async fn start(settings: Arc<Settings>, db: PgPool) -> Result<()> {
+    let server = DnsServer::new(db, settings).await?;
+    server.start().await
+}

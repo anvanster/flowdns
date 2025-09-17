@@ -1,0 +1,80 @@
+# FlowDNS Server Configuration
+
+[server]
+log_level = "debug"
+threads = 4
+
+[database]
+url = "postgresql://flowdns:password@localhost:5432/flowdns"
+max_connections = 10
+min_connections = 2
+connect_timeout = 10
+idle_timeout = 600
+
+[dns]
+enabled = false
+bind_address = "0.0.0.0"
+port = 53
+forward_servers = ["8.8.8.8", "8.8.4.4"]
+domain_suffix = "local"
+dynamic_updates = true
+hostname_template = "host-{ip_dash}"
+ttl_default = 3600
+cache_size = 1000
+
+[dhcp]
+enabled = true
+bind_address = "0.0.0.0"
+port = 67
+default_lease_time = 86400
+max_lease_time = 604800
+renewal_time = 43200
+rebind_time = 75600
+decline_time = 3600
+
+[ipv6]
+enabled = false
+radvd_config_path = "/etc/radvd.conf"
+prefix_length = 64
+router_lifetime = 1800
+reachable_time = 0
+retransmit_time = 0
+
+[routing]
+management_subnet = "192.168.1.0/24"
+upstream_gateway = "192.168.1.1"
+enable_inter_subnet_routing = true
+nat_enabled = false
+
+[api]
+enabled = false
+bind_address = "0.0.0.0"
+port = 8080
+cors_enabled = true
+cors_origins = ["http://localhost:3000"]
+jwt_secret = "change-this-to-a-secure-secret-key-at-least-32-chars"
+jwt_expiry = 86400
+
+# Subnet configurations
+[subnets.main]
+network = "192.168.1.0/24"
+start_ip = "192.168.1.100"
+end_ip = "192.168.1.200"
+gateway = "192.168.1.1"
+dns_servers = ["192.168.1.1", "8.8.8.8"]
+domain_name = "local"
+lease_time = 86400
+description = "Main network subnet"
+enabled = true
+
+[subnets.guest]
+network = "192.168.10.0/24"
+start_ip = "192.168.10.50"
+end_ip = "192.168.10.250"
+gateway = "192.168.10.1"
+dns_servers = ["192.168.10.1", "8.8.8.8"]
+domain_name = "guest.local"
+lease_time = 3600
+vlan_id = 10
+description = "Guest network subnet"
+enabled = true

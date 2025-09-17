@@ -1,0 +1,69 @@
+[package]
+name = "flowdns"
+version = "0.1.0"
+edition = "2021"
+authors = ["FlowDNS Team"]
+license = "MIT"
+description = "Multi-subnet DNS/DHCP server with IPv6 support"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+tokio-util = "0.7"
+
+# Web framework
+actix-web = "4.4"
+actix-ws = "0.3"
+actix-files = "0.6"
+actix-web-httpauth = "0.8"
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "ipnetwork"] }
+
+# DNS
+hickory-server = "0.24"
+hickory-proto = "0.24"
+
+# Networking
+socket2 = "0.5"
+pnet = "0.34"
+netlink-packet-route = "0.17"
+netlink-sys = "0.8"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Utilities
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+thiserror = "1.0"
+async-trait = "0.1"
+
+# Configuration
+config = "0.14"
+clap = { version = "4.5", features = ["derive"] }
+
+# IPv6 and network management
+ipnetwork = "0.20"
+ipnet = "2.9"
+
+# Template engine for hostnames
+tera = "1.19"
+
+# Authentication
+jsonwebtoken = "9.3"
+bcrypt = "0.15"
+
+# Additional utilities
+bytes = "1.7"
+futures = "0.3"
+regex = "1.10"
+
+[dev-dependencies]
+tempfile = "3.0"
+wiremock = "0.6"

@@ -1,0 +1,1 @@
+cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/home/certification/projects/FlowDNS/target/release/build/mime_guess-7a39f0cdd9cdccb7/out/mime_types_generated.rs

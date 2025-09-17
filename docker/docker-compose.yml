@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: flowdns-db
+    environment:
+      POSTGRES_USER: flowdns
+      POSTGRES_PASSWORD: flowdns_password
+      POSTGRES_DB: flowdns
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - flowdns_net
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowdns"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  flowdns:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: flowdns-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://flowdns:flowdns_password@postgres/flowdns
+      RUST_LOG: info
+      FLOWDNS__DATABASE__URL: postgresql://flowdns:flowdns_password@postgres/flowdns
+      FLOWDNS__DATABASE__MAX_CONNECTIONS: 10
+      FLOWDNS__DHCP__ENABLED: "true"
+      FLOWDNS__DHCP__BIND_ADDRESS: "0.0.0.0"
+      FLOWDNS__DNS__ENABLED: "false"
+      FLOWDNS__API__ENABLED: "true"
+      FLOWDNS__API__BIND_ADDRESS: "0.0.0.0"
+    volumes:
+      - ../config:/app/config:ro
+      - flowdns_data:/app/data
+    networks:
+      - flowdns_net
+    ports:
+      - "53:53/udp"      # DNS UDP
+      - "53:53/tcp"      # DNS TCP
+      - "67:67/udp"      # DHCP Server
+      - "68:68/udp"      # DHCP Client
+      - "8080:8080"      # API/Web UI
+    cap_add:
+      - NET_ADMIN        # Required for DHCP
+      - NET_RAW          # Required for raw sockets
+      - NET_BIND_SERVICE # Required for binding to privileged ports
+    restart: unless-stopped
+    command: ["--migrate"]  # Run migrations on startup
+
+  # Optional: Adminer for database management
+  adminer:
+    image: adminer:4-standalone
+    container_name: flowdns-adminer
+    depends_on:
+      - postgres
+    ports:
+      - "8081:8080"
+    networks:
+      - flowdns_net
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: pepa-linha
+
+  # Optional: Redis for caching (future use)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: flowdns-redis
+  #   networks:
+  #     - flowdns_net
+  #   volumes:
+  #     - redis_data:/data
+  #   ports:
+  #     - "6379:6379"
+
+networks:
+  flowdns_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+volumes:
+  postgres_data:
+  flowdns_data:
+  # redis_data:

@@ -1,0 +1,279 @@
+use crate::database::models::DnsZone;
+use crate::config::Settings;
+use sqlx::PgPool;
+use hickory_server::authority::{Authority, Catalog, LookupError, MessageRequest, UpdateResult, ZoneType};
+use hickory_server::proto::rr::{LowerName, Name, Record, RecordType, RData};
+use hickory_server::store::in_memory::InMemoryAuthority;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use uuid::Uuid;
+use chrono::Utc;
+use anyhow::{Result, anyhow};
+use tracing::{info, warn, debug};
+use std::str::FromStr;
+
+pub struct ZoneManager {
+    db: PgPool,
+    zones: Arc<RwLock<HashMap<LowerName, Arc<InMemoryAuthority>>>>,
+    settings: Arc<Settings>,
+}
+
+impl ZoneManager {
+    pub async fn new(db: PgPool, settings: Arc<Settings>) -> Result<Self> {
+        let mut manager = Self {
+            db,
+            zones: Arc::new(RwLock::new(HashMap::new())),
+            settings,
+        };
+
+        manager.load_zones().await?;
+        Ok(manager)
+    }
+
+    async fn load_zones(&mut self) -> Result<()> {
+        use super::zone_queries;
+
+        let zones = zone_queries::fetch_all_zones(&self.db).await?;
+
+        let mut zone_map = self.zones.write().await;
+        for zone in zones {
+            let zone_name = Name::from_str(&zone.name)?;
+            let lower_name = LowerName::from(zone_name.clone());
+
+            // Create in-memory authority for the zone
+            let authority = self.create_authority(&zone).await?;
+            zone_map.insert(lower_name, Arc::new(authority));
+
+            info!("Loaded DNS zone: {}", zone.name);
+        }
+
+        info!("Loaded {} DNS zones", zone_map.len());
+        Ok(())
+    }
+
+    async fn create_authority(&self, zone: &DnsZone) -> Result<InMemoryAuthority> {
+        let zone_name = Name::from_str(&zone.name)?;
+        let primary_ns = Name::from_str(zone.primary_ns.as_deref().unwrap_or("ns1.example.com"))?;
+        let admin_email = zone.admin_email
+            .as_deref()
+            .unwrap_or("admin@example.com")
+            .replace('@', ".");
+        let admin_name = Name::from_str(&admin_email)?;
+
+        // Create SOA record
+        let soa = hickory_server::proto::rr::rdata::SOA::new(
+            primary_ns,
+            admin_name,
+            zone.serial_number as u32,
+            zone.refresh_interval,
+            zone.retry_interval,
+            zone.expire_interval,
+            zone.minimum_ttl as u32,
+        );
+
+        // Create the authority with empty records initially
+        let records = std::collections::BTreeMap::new();
+        let mut authority = InMemoryAuthority::new(
+            zone_name.clone(),
+            records,
+            ZoneType::Primary,
+            false, // allow_axfr
+        ).map_err(|e| anyhow::anyhow!("Failed to create authority: {}", e))?;
+
+        // Add the SOA record
+        let mut soa_record = Record::new();
+        soa_record.set_name(zone_name.clone())
+                  .set_ttl(zone.minimum_ttl as u32)
+                  .set_rr_type(RecordType::SOA)
+                  .set_data(Some(RData::SOA(soa)));
+        authority.upsert_mut(soa_record, zone.serial_number as u32);
+
+        // Load records for this zone
+        self.load_zone_records(zone.id, &mut authority).await?;
+
+        Ok(authority)
+    }
+
+    async fn load_zone_records(&self, zone_id: Uuid, authority: &mut InMemoryAuthority) -> Result<()> {
+        use super::zone_queries;
+
+        let records = zone_queries::fetch_zone_records(&self.db, zone_id).await?;
+
+        for record in records {
+            let name = Name::from_str(&record.name)?;
+            let record_type = RecordType::from_str(&record.record_type)?;
+            let ttl = record.ttl as u32;
+
+            let rdata = match record_type {
+                RecordType::A => {
+                    let ip: std::net::Ipv4Addr = record.value.parse()?;
+                    RData::A(hickory_server::proto::rr::rdata::A(ip))
+                },
+                RecordType::AAAA => {
+                    let ip: std::net::Ipv6Addr = record.value.parse()?;
+                    RData::AAAA(hickory_server::proto::rr::rdata::AAAA(ip))
+                },
+                RecordType::CNAME => {
+                    let target = Name::from_str(&record.value)?;
+                    RData::CNAME(hickory_server::proto::rr::rdata::CNAME(target))
+                },
+                RecordType::MX => {
+                    let priority = record.priority.unwrap_or(10) as u16;
+                    let exchange = Name::from_str(&record.value)?;
+                    RData::MX(hickory_server::proto::rr::rdata::MX::new(priority, exchange))
+                },
+                RecordType::TXT => {
+                    RData::TXT(hickory_server::proto::rr::rdata::TXT::new(vec![record.value]))
+                },
+                RecordType::PTR => {
+                    let target = Name::from_str(&record.value)?;
+                    RData::PTR(hickory_server::proto::rr::rdata::PTR(target))
+                },
+                RecordType::NS => {
+                    let ns = Name::from_str(&record.value)?;
+                    RData::NS(hickory_server::proto::rr::rdata::NS(ns))
+                },
+                _ => {
+                    warn!("Unsupported record type: {:?}", record_type);
+                    continue;
+                }
+            };
+
+            let mut dns_record = Record::new();
+            dns_record.set_name(name)
+                  .set_ttl(ttl)
+                  .set_rr_type(record_type)
+                  .set_data(Some(rdata));
+
+            // Get current zone serial
+            let serial = Utc::now().timestamp() as u32;
+            authority.upsert_mut(dns_record, serial);
+        }
+
+        Ok(())
+    }
+
+    pub async fn add_dynamic_record(
+        &self,
+        zone_name: &str,
+        hostname: &str,
+        ip: std::net::IpAddr,
+        ttl: u32,
+    ) -> Result<()> {
+        let zone = Name::from_str(zone_name)?;
+        let lower_zone = LowerName::from(zone.clone());
+
+        let zones = self.zones.read().await;
+        let authority = zones.get(&lower_zone)
+            .ok_or_else(|| anyhow!("Zone not found: {}", zone_name))?;
+
+        let fqdn = if hostname.ends_with(zone_name) {
+            Name::from_str(hostname)?
+        } else {
+            Name::from_str(&format!("{}.{}", hostname, zone_name))?
+        };
+
+        let rdata = match ip {
+            std::net::IpAddr::V4(ipv4) => {
+                RData::A(hickory_server::proto::rr::rdata::A(ipv4))
+            },
+            std::net::IpAddr::V6(ipv6) => {
+                RData::AAAA(hickory_server::proto::rr::rdata::AAAA(ipv6))
+            },
+        };
+
+        let record_type = match ip {
+            std::net::IpAddr::V4(_) => RecordType::A,
+            std::net::IpAddr::V6(_) => RecordType::AAAA,
+        };
+
+        let mut record = Record::new();
+        record.set_name(fqdn.clone())
+              .set_ttl(ttl)
+              .set_rr_type(record_type)
+              .set_data(Some(rdata));
+
+        let serial = Utc::now().timestamp() as u32;
+        authority.upsert_mut(record, serial);
+
+        // Also add PTR record for reverse DNS
+        self.add_ptr_record(ip, &fqdn.to_string(), ttl).await?;
+
+        info!("Added dynamic DNS record: {} -> {}", hostname, ip);
+        Ok(())
+    }
+
+    async fn add_ptr_record(&self, ip: std::net::IpAddr, hostname: &str, ttl: u32) -> Result<()> {
+        let ptr_zone = match ip {
+            std::net::IpAddr::V4(ipv4) => {
+                let octets = ipv4.octets();
+                format!("{}.{}.{}.in-addr.arpa", octets[2], octets[1], octets[0])
+            },
+            std::net::IpAddr::V6(ipv6) => {
+                // Simplified IPv6 PTR - in production would need full nibble reversal
+                "ip6.arpa".to_string()
+            },
+        };
+
+        let ptr_name = match ip {
+            std::net::IpAddr::V4(ipv4) => {
+                let octets = ipv4.octets();
+                format!("{}.{}.{}.{}.in-addr.arpa", octets[3], octets[2], octets[1], octets[0])
+            },
+            std::net::IpAddr::V6(_) => {
+                // Simplified - would need full implementation
+                return Ok(());
+            },
+        };
+
+        let zone = Name::from_str(&ptr_zone)?;
+        let lower_zone = LowerName::from(zone.clone());
+
+        let zones = self.zones.read().await;
+        if let Some(authority) = zones.get(&lower_zone) {
+            let ptr_name = Name::from_str(&ptr_name)?;
+            let target = Name::from_str(hostname)?;
+
+            let mut record = Record::new();
+            record.set_name(ptr_name)
+                  .set_ttl(ttl)
+                  .set_rr_type(RecordType::PTR)
+                  .set_data(Some(RData::PTR(hickory_server::proto::rr::rdata::PTR(target))));
+
+            let serial = Utc::now().timestamp() as u32;
+            authority.upsert_mut(record, serial);
+
+            debug!("Added PTR record for {}", ip);
+        }
+
+        Ok(())
+    }
+
+    pub async fn remove_dynamic_record(&self, zone_name: &str, hostname: &str) -> Result<()> {
+        let zone = Name::from_str(zone_name)?;
+        let lower_zone = LowerName::from(zone.clone());
+
+        let zones = self.zones.read().await;
+        let authority = zones.get(&lower_zone)
+            .ok_or_else(|| anyhow!("Zone not found: {}", zone_name))?;
+
+        let fqdn = if hostname.ends_with(zone_name) {
+            Name::from_str(hostname)?
+        } else {
+            Name::from_str(&format!("{}.{}", hostname, zone_name))?
+        };
+
+        // Remove A and AAAA records
+        for record_type in &[RecordType::A, RecordType::AAAA] {
+            authority.remove(&fqdn, *record_type, None);
+        }
+
+        info!("Removed dynamic DNS record: {}", hostname);
+        Ok(())
+    }
+
+    pub fn get_catalog(&self) -> Arc<RwLock<HashMap<LowerName, Arc<InMemoryAuthority>>>> {
+        self.zones.clone()
+    }
+}
