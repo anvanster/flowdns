@@ -405,7 +405,7 @@ impl Dhcpv6Server {
         }
     }
     
-    fn get_dns_servers(settings: &Settings) -> Option<Vec<u8>> {
+    fn get_dns_servers(_settings: &Settings) -> Option<Vec<u8>> {
         // Return IPv6 DNS servers if configured
         // This is simplified - would read from settings
         let mut data = Vec::new();

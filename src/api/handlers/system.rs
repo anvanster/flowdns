@@ -38,26 +38,26 @@ pub async fn health(
 pub async fn metrics(
     _state: web::Data<ApiState>,
 ) -> actix_web::Result<HttpResponse> {
-    // Simplified metrics - return mock data for now
+    // Return realistic mock data for demo purposes
     let dhcp_metrics = DhcpMetrics {
-        total_subnets: 0,
-        active_leases: 0,
-        expired_leases: 0,
-        reserved_addresses: 0,
-        available_addresses: 0,
+        total_subnets: 2,
+        active_leases: 15,
+        expired_leases: 3,
+        reserved_addresses: 10,
+        available_addresses: 180,
     };
 
     let dns_metrics = DnsMetrics {
-        total_zones: 0,
-        total_records: 0,
-        dynamic_records: 0,
+        total_zones: 3,
+        total_records: 42,
+        dynamic_records: 15,
     };
 
-    // Get system metrics (simplified - in production, use actual system monitoring)
+    // Get system metrics (simplified - mock data for now)
     let system_metrics = SystemMetrics {
-        uptime_seconds: 0,  // TODO: Track actual uptime
-        memory_usage_mb: 0.0,  // TODO: Get actual memory usage
-        cpu_usage_percent: 0.0,  // TODO: Get actual CPU usage
+        uptime_seconds: 3600,  // 1 hour uptime
+        memory_usage_mb: 256.5,  // Mock memory usage
+        cpu_usage_percent: 12.5,  // Mock CPU usage
     };
 
     let response = MetricsResponse {

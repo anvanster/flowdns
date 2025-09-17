@@ -49,6 +49,12 @@ pub async fn start(settings: Arc<Settings>, db: PgPool) -> Result<()> {
                             .route("", web::get().to(handlers::docs::swagger_ui))
                     )
                     .service(
+                        // System health and metrics endpoints (no auth required for monitoring)
+                        web::scope("/system")
+                            .route("/health", web::get().to(handlers::system::health))
+                            .route("/metrics", web::get().to(handlers::system::metrics))
+                    )
+                    .service(
                         // Protected endpoints (auth required)
                         web::scope("")
                             .wrap(auth_middleware)
@@ -82,11 +88,9 @@ pub async fn start(settings: Arc<Settings>, db: PgPool) -> Result<()> {
                                     .route("/records/{id}", web::put().to(handlers::dns::update_record))
                                     .route("/records/{id}", web::delete().to(handlers::dns::delete_record))
                             )
-                            // System endpoints
+                            // Protected system endpoints
                             .service(
                                 web::scope("/system")
-                                    .route("/health", web::get().to(handlers::system::health))
-                                    .route("/metrics", web::get().to(handlers::system::metrics))
                                     .route("/config", web::get().to(handlers::system::get_config))
                             )
                     )

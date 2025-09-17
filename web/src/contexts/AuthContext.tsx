@@ -46,11 +46,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         password,
       })
 
-      const { token } = response.data
-      localStorage.setItem('token', token)
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
-      
-      setToken(token)
+      const { access_token } = response.data
+      localStorage.setItem('token', access_token)
+      axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`
+
+      setToken(access_token)
       setIsAuthenticated(true)
       setUser({ username, role: 'admin' })
     } catch (error) {

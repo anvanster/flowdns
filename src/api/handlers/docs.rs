@@ -435,7 +435,7 @@ pub async fn swagger_ui() -> HttpResponse {
     <script>
         window.onload = function() {
             window.ui = SwaggerUIBundle({
-                url: "/api/docs/openapi.json",
+                url: "/api/v1/docs/openapi.json",
                 dom_id: '#swagger-ui',
                 deepLinking: true,
                 presets: [

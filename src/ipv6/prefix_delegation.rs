@@ -180,7 +180,7 @@ impl PrefixDelegationManager {
             "#
         )
         .bind(client_duid)
-        .bind(iaid)
+        .bind(iaid as i32)
         .fetch_optional(&self.db)
         .await?;
         
@@ -238,7 +238,7 @@ impl PrefixDelegationManager {
         )
         .bind(&delegation.id)
         .bind(&delegation.client_duid)
-        .bind(delegation.iaid)
+        .bind(delegation.iaid as i32)
         .bind(delegation.prefix.to_string())
         .bind(delegation.prefix_length as i32)
         .bind(delegation.delegated_length as i32)
@@ -267,7 +267,7 @@ impl PrefixDelegationManager {
             "#
         )
         .bind(client_duid)
-        .bind(iaid)
+        .bind(iaid as i32)
         .bind(prefix.to_string())
         .execute(&self.db)
         .await?;

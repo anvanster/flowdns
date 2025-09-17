@@ -1,11 +1,11 @@
-# FlowDNS Server Configuration
+# FlowDNS Server Configuration - API Only Mode
 
 [server]
-log_level = "debug"
+log_level = "info"
 threads = 4
 
 [database]
-url = "postgresql://flowdns:Admin%4012@localhost:5432/flowdns"
+url = "postgresql://flowdns:Admin@12@localhost:5432/flowdns"
 max_connections = 10
 min_connections = 2
 connect_timeout = 10
@@ -55,7 +55,10 @@ cors_origins = ["http://localhost:3000"]
 jwt_secret = "change-this-to-a-secure-secret-key-at-least-32-chars"
 jwt_expiry = 86400
 
-# Subnet configurations
+[logging]
+level = "info"
+
+# Subnet configurations (required even if DHCP is disabled)
 [subnets.main]
 network = "192.168.1.0/24"
 start_ip = "192.168.1.100"
@@ -65,16 +68,4 @@ dns_servers = ["192.168.1.1", "8.8.8.8"]
 domain_name = "local"
 lease_time = 86400
 description = "Main network subnet"
-enabled = true
-
-[subnets.guest]
-network = "192.168.10.0/24"
-start_ip = "192.168.10.50"
-end_ip = "192.168.10.250"
-gateway = "192.168.10.1"
-dns_servers = ["192.168.10.1", "8.8.8.8"]
-domain_name = "guest.local"
-lease_time = 3600
-vlan_id = 10
-description = "Guest network subnet"
 enabled = true
