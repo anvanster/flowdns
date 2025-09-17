@@ -64,6 +64,9 @@ bytes = "1.7"
 futures = "0.3"
 regex = "1.10"
 
+# Cryptography for IPv6 privacy addresses
+sha2 = "0.10"
+
 [dev-dependencies]
 tempfile = "3.0"
 wiremock = "0.6"
